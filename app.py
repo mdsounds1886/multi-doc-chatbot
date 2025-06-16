@@ -95,9 +95,10 @@ if user_input:
     messages = [
         {
             "role": "system",
-            "content": f"You are a helpful assistant answering questions based strictly on the following content from the document [{filename}]. Be concise, clear, and if helpful, summarize in bullet points or sections:
-
-{context}"
+            "content": (
+                f"You are a helpful assistant answering questions based strictly on the following content "
+                f"from the document [{filename}]. Be concise, clear, and if helpful, summarize in bullet points or sections:\n\n{context}"
+            )
         },
         {"role": "user", "content": user_input}
     ]
