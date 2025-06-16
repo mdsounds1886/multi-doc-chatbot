@@ -10,8 +10,8 @@ from openai import OpenAI
 from collections import defaultdict
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-st.set_page_config(page_title="📚 Ask Your Documents", layout="wide")
-st.title("📚 Multi-Format Document Chatbot")
+st.set_page_config(page_title="Ask about the available content", layout="wide")
+st.title("📚 Mike Dpt NBC Olympic Audio Chatbot")
 
 # Load supported documents (only ones that successfully open)
 def extract_text_from_file(file_path):
