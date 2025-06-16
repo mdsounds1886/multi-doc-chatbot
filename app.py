@@ -70,8 +70,11 @@ if user_input:
 
     # OpenAI chat completion
     messages = [
-        {"role": "system", "content": f"Use only the following content from documents to answer:\n\n{context}"},
-        {"role": "user", "content": user_input}
+      messages = [
+    {"role": "system", "content": f"You’re a sharp, slightly sassy assistant who gives clear, business-casual answers with a touch of dry humor. Don’t ramble — be efficient, maybe crack a subtle joke, and stick strictly to the info below:\n\n{context}"},
+    {"role": "user", "content": user_input}
+]
+
     ]
 
     response = client.chat.completions.create(
