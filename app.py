@@ -17,7 +17,7 @@ st.title("📚 Multi-Format Document Chatbot")
 
 # Sidebar showing document list
 with st.sidebar:
-    st.subheader("📂 Available Documents")
+    st.subheader("📂Available Content")
     all_docs = [f for f in os.listdir("./docs") if f.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls', '.txt'))]
     for doc in sorted(all_docs):
         st.markdown(f"- `{doc}`")
