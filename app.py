@@ -14,18 +14,6 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 st.set_page_config(page_title="📚 Ask Your Documents", layout="wide")
 st.title("📚 Multi-Format Document Chatbot")
 
-# Helper: chunk text into overlapping pieces
-def split_text_into_chunks(text, max_length=500, overlap=50):
-    words = text.split()
-    chunks = []
-    start = 0
-    while start < len(words):
-        end = min(len(words), start + max_length)
-        chunk = " ".join(words[start:end])
-        chunks.append(chunk)
-        start += max_length - overlap
-    return chunks
-
 # Extract text from supported file types
 def extract_text_from_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
@@ -43,6 +31,23 @@ def extract_text_from_file(file_path):
             return f.read()
     return ""
 
+# Smarter chunking: preserve paragraph structure and merge small chunks
+def smart_chunking(text, max_len=700):
+    paragraphs = [p.strip() for p in text.split("\n\n") if len(p.strip()) > 20]
+    combined = []
+    temp = ""
+
+    for para in paragraphs:
+        if len(temp) + len(para) < max_len:
+            temp += " " + para
+        else:
+            combined.append(temp.strip())
+            temp = para
+    if temp:
+        combined.append(temp.strip())
+
+    return combined
+
 # Load and embed all document content with filenames
 @st.cache_resource
 def load_documents():
@@ -54,7 +59,7 @@ def load_documents():
             full_path = os.path.join(docs_folder, filename)
             raw_text = extract_text_from_file(full_path)
             if raw_text:
-                for chunk in split_text_into_chunks(raw_text):
+                for chunk in smart_chunking(raw_text):
                     file_chunks.append((filename, chunk))
 
     texts = [chunk for (_, chunk) in file_chunks]
