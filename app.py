@@ -9,21 +9,26 @@ from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 from collections import defaultdict
 
-# Set up OpenAI client
+# OpenAI setup
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# Streamlit UI config
-st.set_page_config(page_title="📚 Ask Your Documents", layout="wide")
-st.title("📚 Multi-Format Document Chatbot")
+st.set_page_config(page_title="Mike Dpt", layout="wide")
+st.title("NBC Audio Olympic Chatbot")
 
-# Sidebar showing list of available documents
+# Load and number all supported documents
+all_docs = sorted([
+    f for f in os.listdir("./docs")
+    if f.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls', '.txt'))
+])
+doc_map = {str(i + 1): fname for i, fname in enumerate(all_docs)}
+
+# Sidebar list
 with st.sidebar:
-    st.subheader("📂 Available Documents")
-    all_docs = [f for f in os.listdir("./docs") if f.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls', '.txt'))]
-    for doc in sorted(all_docs):
-        st.markdown(f"- `{doc}`")
+    st.subheader("📂 AVAILABLE CONTENT")
+    for num, fname in doc_map.items():
+        st.markdown(f"**{num}.** `{fname}`")
 
-# Function to extract raw text from supported file types
+# File reading
 def extract_text_from_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
     if ext == ".pdf":
@@ -40,7 +45,7 @@ def extract_text_from_file(file_path):
             return f.read()
     return ""
 
-# Function to smartly chunk long documents for embedding
+# Chunking
 def smart_chunking(text, max_len=700):
     paragraphs = [p.strip() for p in text.split("\n\n") if len(p.strip()) > 20]
     combined = []
@@ -55,65 +60,83 @@ def smart_chunking(text, max_len=700):
         combined.append(temp.strip())
     return combined
 
-# Cache-loaded document chunks and embeddings
+# Load & cache
 @st.cache_resource
 def load_documents():
-    docs_folder = "./docs"
-    file_chunks = []  # (filename, chunk)
-    for filename in os.listdir(docs_folder):
-        if filename.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls', '.txt')):
-            full_path = os.path.join(docs_folder, filename)
-            raw_text = extract_text_from_file(full_path)
-            if raw_text:
-                for chunk in smart_chunking(raw_text):
-                    file_chunks.append((filename, chunk))
-    texts = [chunk for (_, chunk) in file_chunks]
+    file_chunks = []  # (doc_number, filename, chunk)
+    for num, filename in doc_map.items():
+        full_path = os.path.join("./docs", filename)
+        raw_text = extract_text_from_file(full_path)
+        if raw_text:
+            for chunk in smart_chunking(raw_text):
+                file_chunks.append((num, filename, chunk))
+
+    texts = [chunk for (_, _, chunk) in file_chunks]
     model = SentenceTransformer("all-MiniLM-L6-v2")
     embeddings = model.encode(texts)
     index = faiss.IndexFlatL2(embeddings[0].shape[0])
     index.add(np.array(embeddings))
+
     return file_chunks, index, model
 
 file_chunks, index, model = load_documents()
 
-# Load chat history
+# Chat state
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# Input box for user question
 user_input = st.chat_input("Ask a question about the documents")
 
-# Check if the user is asking about the files directly
 file_qs = ["what documents do you have", "list all documents", "what files are loaded", "what files do you have"]
 intercepted = user_input and any(q in user_input.lower() for q in file_qs)
 
-# Handle new user input
 if user_input:
     st.session_state.chat_history.append(("user", user_input))
 
     if intercepted:
-        doc_list_str = "\n".join(f"- {doc}" for doc in sorted(all_docs))
-        reply = f"Here are the documents I can reference:\n\n{doc_list_str}"
+        reply = "**Here are the documents I can reference:**\n\n" + "\n".join(
+            f"**{num}.** {name}" for num, name in doc_map.items()
+        )
         st.session_state.chat_history.append(("assistant", reply))
+
     else:
-        query_embedding = model.encode([user_input])
-        _, indices = index.search(np.array(query_embedding), k=8)
+        target_doc_num = None
+        for word in user_input.lower().split():
+            if word.isdigit() and word in doc_map:
+                if f"document {word}" in user_input.lower():
+                    target_doc_num = word
+                    break
 
-        selected_chunks = [file_chunks[i] for i in indices[0]]
+        if target_doc_num:
+            relevant_chunks = [(n, f, c) for (n, f, c) in file_chunks if n == target_doc_num]
+            query_embedding = model.encode([user_input])
+            chunk_embeddings = model.encode([chunk for (_, _, chunk) in relevant_chunks])
+            chunk_index = faiss.IndexFlatL2(chunk_embeddings[0].shape[0])
+            chunk_index.add(np.array(chunk_embeddings))
+            _, local_indices = chunk_index.search(query_embedding, k=min(6, len(relevant_chunks)))
+            selected_chunks = [relevant_chunks[i] for i in local_indices[0]]
+        else:
+            query_embedding = model.encode([user_input])
+            _, global_indices = index.search(np.array(query_embedding), k=8)
+            selected_chunks = [file_chunks[i] for i in global_indices[0]]
+
+        # Determine best doc
         grouped = defaultdict(list)
-        for filename, chunk in selected_chunks:
-            grouped[filename].append(chunk)
+        for doc_num, fname, chunk in selected_chunks:
+            grouped[(doc_num, fname)].append(chunk)
 
-        best_file = max(grouped.items(), key=lambda x: len(x[1]))
-        context = "\n\n".join(best_file[1])
-        filename = best_file[0]
+        best_doc = max(grouped.items(), key=lambda x: len(x[1]))
+        (doc_num, filename), best_chunks = best_doc
+        context = "\n\n".join(best_chunks)
+
+        summary_msg = f"💡 Responding using **Document {doc_num}: {filename}**\n\n"
 
         messages = [
             {
                 "role": "system",
                 "content": (
-                    f"You are a helpful assistant answering questions based strictly on the following content "
-                    f"from the document [{filename}]. Be concise, clear, and if helpful, summarize in bullet points or sections:\n\n{context}"
+                    f"You are a sharp, sassy, business-casual assistant. Answer using only this content from Document {doc_num} ({filename}). "
+                    f"If helpful, summarize with bullets or clarity:\n\n{context}"
                 )
             },
             {"role": "user", "content": user_input}
@@ -123,11 +146,10 @@ if user_input:
             model="gpt-3.5-turbo",
             messages=messages
         )
-
-        answer = response.choices[0].message.content
+        answer = summary_msg + response.choices[0].message.content
         st.session_state.chat_history.append(("assistant", answer))
 
-# Display chat history
+# Render history
 for role, msg in st.session_state.chat_history:
     with st.chat_message(role):
         st.markdown(msg)
