@@ -85,7 +85,7 @@ file_chunks, index, model, doc_map = load_documents()
 
 # Sidebar
 with st.sidebar:
-    st.subheader("📂 Available Content)
+    st.subheader("📂 Available Content")
     for num, fname in doc_map.items():
         st.markdown(f"**{num}.** `{fname}`")
 
