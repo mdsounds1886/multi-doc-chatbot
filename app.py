@@ -1,3 +1,4 @@
+
 import os
 import streamlit as st
 import pdfplumber
@@ -8,11 +9,22 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 
-# Initialize OpenAI client (v1.x syntax)
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 st.set_page_config(page_title="📚 Ask Your Documents", layout="wide")
 st.title("📚 Multi-Format Document Chatbot")
+
+# Helper: chunk text into overlapping pieces
+def split_text_into_chunks(text, max_length=500, overlap=50):
+    words = text.split()
+    chunks = []
+    start = 0
+    while start < len(words):
+        end = min(len(words), start + max_length)
+        chunk = " ".join(words[start:end])
+        chunks.append(chunk)
+        start += max_length - overlap
+    return chunks
 
 # Extract text from supported file types
 def extract_text_from_file(file_path):
@@ -31,30 +43,30 @@ def extract_text_from_file(file_path):
             return f.read()
     return ""
 
-# Load and embed all document content
+# Load and embed all document content with filenames
 @st.cache_resource
 def load_documents():
-    chunks = []
     docs_folder = "./docs"
-    files = [f for f in os.listdir(docs_folder) if f.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls', '.txt'))]
-    
-    for file in files:
-        path = os.path.join(docs_folder, file)
-        raw_text = extract_text_from_file(path)
-        if raw_text:
-            chunks.extend(raw_text.split("\n\n"))
+    file_chunks = []  # List of (filename, text chunk)
 
+    for filename in os.listdir(docs_folder):
+        if filename.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls', '.txt')):
+            full_path = os.path.join(docs_folder, filename)
+            raw_text = extract_text_from_file(full_path)
+            if raw_text:
+                for chunk in split_text_into_chunks(raw_text):
+                    file_chunks.append((filename, chunk))
+
+    texts = [chunk for (_, chunk) in file_chunks]
     model = SentenceTransformer("all-MiniLM-L6-v2")
-    embeddings = model.encode(chunks)
+    embeddings = model.encode(texts)
     index = faiss.IndexFlatL2(embeddings[0].shape[0])
     index.add(np.array(embeddings))
 
-    return chunks, index, model
+    return file_chunks, index, model
 
-# Load documents once
-chunks, index, model = load_documents()
+file_chunks, index, model = load_documents()
 
-# Chat interface
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -63,15 +75,18 @@ user_input = st.chat_input("Ask a question about the documents")
 if user_input:
     st.session_state.chat_history.append(("user", user_input))
 
-    # Embed the question and retrieve similar chunks
     query_embedding = model.encode([user_input])
-    _, indices = index.search(np.array(query_embedding), k=3)
-    context = "\n\n".join([chunks[i] for i in indices[0]])
+    _, indices = index.search(np.array(query_embedding), k=5)  # top 5 chunks
 
-    # OpenAI chat completion
+    selected_chunks = [file_chunks[i] for i in indices[0]]  # [(filename, chunk), ...]
+    context = "\n\n".join([f"[{fn}]\n{text}" for fn, text in selected_chunks])
+
     messages = [
-    {"role": "system", "content": f"You’re a sharp, slightly sassy assistant who gives clear, business-casual answers with a touch of dry humor. Don’t ramble — be efficient, maybe crack a subtle joke, and stick strictly to the info below:\n\n{context}"},
-    {"role": "user", "content": user_input}
+        {
+            "role": "system",
+            "content": f"You’re a sharp, slightly sassy assistant who gives clear, business-casual answers with a touch of dry humor. Don’t ramble — be efficient, maybe crack a subtle joke, and stick strictly to the info below:\n\n{context}"
+        },
+        {"role": "user", "content": user_input}
     ]
 
     response = client.chat.completions.create(
@@ -82,8 +97,6 @@ if user_input:
     answer = response.choices[0].message.content
     st.session_state.chat_history.append(("assistant", answer))
 
-# Display conversation
 for role, msg in st.session_state.chat_history:
     with st.chat_message(role):
         st.markdown(msg)
-
