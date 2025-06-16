@@ -8,13 +8,13 @@ import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from openai import OpenAI
+from collections import defaultdict
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 st.set_page_config(page_title="📚 Ask Your Documents", layout="wide")
 st.title("📚 Multi-Format Document Chatbot")
 
-# Extract text from supported file types
 def extract_text_from_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
     if ext == ".pdf":
@@ -31,7 +31,6 @@ def extract_text_from_file(file_path):
             return f.read()
     return ""
 
-# Smarter chunking: preserve paragraph structure and merge small chunks
 def smart_chunking(text, max_len=700):
     paragraphs = [p.strip() for p in text.split("\n\n") if len(p.strip()) > 20]
     combined = []
@@ -48,12 +47,10 @@ def smart_chunking(text, max_len=700):
 
     return combined
 
-# Load and embed all document content with filenames
 @st.cache_resource
 def load_documents():
     docs_folder = "./docs"
-    file_chunks = []  # List of (filename, text chunk)
-
+    file_chunks = []  # (filename, chunk)
     for filename in os.listdir(docs_folder):
         if filename.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls', '.txt')):
             full_path = os.path.join(docs_folder, filename)
@@ -81,15 +78,26 @@ if user_input:
     st.session_state.chat_history.append(("user", user_input))
 
     query_embedding = model.encode([user_input])
-    _, indices = index.search(np.array(query_embedding), k=5)  # top 5 chunks
+    _, indices = index.search(np.array(query_embedding), k=8)
 
-    selected_chunks = [file_chunks[i] for i in indices[0]]  # [(filename, chunk), ...]
-    context = "\n\n".join([f"[{fn}]\n{text}" for fn, text in selected_chunks])
+    selected_chunks = [file_chunks[i] for i in indices[0]]
+
+    # Group chunks by filename and pick the most common match
+    grouped = defaultdict(list)
+    for filename, chunk in selected_chunks:
+        grouped[filename].append(chunk)
+
+    # Use the file with the most relevant chunks
+    best_file = max(grouped.items(), key=lambda x: len(x[1]))
+    context = "\n\n".join(best_file[1])
+    filename = best_file[0]
 
     messages = [
         {
             "role": "system",
-            "content": f"You’re a sharp, slightly sassy assistant who gives clear, business-casual answers with a touch of dry humor. Don’t ramble — be efficient, maybe crack a subtle joke, and stick strictly to the info below:\n\n{context}"
+            "content": f"You are a helpful assistant answering questions based strictly on the following content from the document [{filename}]. Be concise, clear, and if helpful, summarize in bullet points or sections:
+
+{context}"
         },
         {"role": "user", "content": user_input}
     ]
