@@ -10,8 +10,8 @@ from openai import OpenAI
 from collections import defaultdict
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-st.set_page_config(page_title="Ask about the available content", layout="wide")
-st.title("📚 Mike Dpt NBC Olympic Audio Chatbot")
+st.set_page_config(page_title="Mike Dpt", layout="wide")
+st.title("🏅 Mike Dpt NBC Olympic Audio Chatbot 🏅")
 
 # Load supported documents (only ones that successfully open)
 def extract_text_from_file(file_path):
@@ -85,7 +85,7 @@ file_chunks, index, model, doc_map = load_documents()
 
 # Sidebar
 with st.sidebar:
-    st.subheader("📂 Available Documents")
+    st.subheader("📂 Available Content)
     for num, fname in doc_map.items():
         st.markdown(f"**{num}.** `{fname}`")
 
@@ -93,7 +93,7 @@ with st.sidebar:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-user_input = st.chat_input("Ask a question about the documents")
+user_input = st.chat_input("Do you have questions about the available content?")
 file_qs = ["what documents do you have", "list all documents", "what files are loaded", "what files do you have"]
 intercepted = user_input and any(q in user_input.lower() for q in file_qs)
 
