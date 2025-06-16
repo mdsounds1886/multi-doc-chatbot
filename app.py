@@ -9,43 +9,31 @@ from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 from collections import defaultdict
 
-# OpenAI setup
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+st.set_page_config(page_title="📚 Ask Your Documents", layout="wide")
+st.title("📚 Multi-Format Document Chatbot")
 
-st.set_page_config(page_title="Mike Dpt", layout="wide")
-st.title("NBC Audio Olympic Chatbot")
-
-# Load and number all supported documents
-all_docs = sorted([
-    f for f in os.listdir("./docs")
-    if f.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls', '.txt'))
-])
-doc_map = {str(i + 1): fname for i, fname in enumerate(all_docs)}
-
-# Sidebar list
-with st.sidebar:
-    st.subheader("📂 AVAILABLE CONTENT")
-    for num, fname in doc_map.items():
-        st.markdown(f"**{num}.** `{fname}`")
-
-# File reading
+# Load supported documents (only ones that successfully open)
 def extract_text_from_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
-    if ext == ".pdf":
-        with pdfplumber.open(file_path) as pdf:
-            return "\n".join(p.extract_text() or "" for p in pdf.pages)
-    elif ext == ".docx":
-        doc = docx.Document(file_path)
-        return "\n".join(p.text for p in doc.paragraphs)
-    elif ext in [".xlsx", ".xls"]:
-        df = pd.read_excel(file_path, sheet_name=None)
-        return "\n".join(df[sheet].to_string() for sheet in df)
-    elif ext == ".txt":
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()
+    try:
+        if ext == ".pdf":
+            with pdfplumber.open(file_path) as pdf:
+                return "\n".join(p.extract_text() or "" for p in pdf.pages)
+        elif ext == ".docx":
+            doc = docx.Document(file_path)
+            return "\n".join(p.text for p in doc.paragraphs)
+        elif ext in [".xlsx", ".xls"]:
+            df = pd.read_excel(file_path, sheet_name=None)
+            return "\n".join(df[sheet].to_string() for sheet in df)
+        elif ext == ".txt":
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+    except Exception as e:
+        print(f"❌ Skipping file {file_path}: {e}")
     return ""
 
-# Chunking
+# Chunk text into readable chunks
 def smart_chunking(text, max_len=700):
     paragraphs = [p.strip() for p in text.split("\n\n") if len(p.strip()) > 20]
     combined = []
@@ -60,16 +48,30 @@ def smart_chunking(text, max_len=700):
         combined.append(temp.strip())
     return combined
 
-# Load & cache
+# Cache document loading
 @st.cache_resource
 def load_documents():
     file_chunks = []  # (doc_number, filename, chunk)
+    valid_files = []
+
+    raw_docs = sorted([
+        f for f in os.listdir("./docs")
+        if f.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls', '.txt'))
+    ])
+
+    for f in raw_docs:
+        full_path = os.path.join("./docs", f)
+        text = extract_text_from_file(full_path)
+        if text:
+            valid_files.append(f)
+
+    doc_map = {str(i + 1): fname for i, fname in enumerate(valid_files)}
+
     for num, filename in doc_map.items():
         full_path = os.path.join("./docs", filename)
         raw_text = extract_text_from_file(full_path)
-        if raw_text:
-            for chunk in smart_chunking(raw_text):
-                file_chunks.append((num, filename, chunk))
+        for chunk in smart_chunking(raw_text):
+            file_chunks.append((num, filename, chunk))
 
     texts = [chunk for (_, _, chunk) in file_chunks]
     model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -77,16 +79,21 @@ def load_documents():
     index = faiss.IndexFlatL2(embeddings[0].shape[0])
     index.add(np.array(embeddings))
 
-    return file_chunks, index, model
+    return file_chunks, index, model, doc_map
 
-file_chunks, index, model = load_documents()
+file_chunks, index, model, doc_map = load_documents()
 
-# Chat state
+# Sidebar
+with st.sidebar:
+    st.subheader("📂 Available Documents")
+    for num, fname in doc_map.items():
+        st.markdown(f"**{num}.** `{fname}`")
+
+# Track chat history
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 user_input = st.chat_input("Ask a question about the documents")
-
 file_qs = ["what documents do you have", "list all documents", "what files are loaded", "what files do you have"]
 intercepted = user_input and any(q in user_input.lower() for q in file_qs)
 
@@ -120,7 +127,6 @@ if user_input:
             _, global_indices = index.search(np.array(query_embedding), k=8)
             selected_chunks = [file_chunks[i] for i in global_indices[0]]
 
-        # Determine best doc
         grouped = defaultdict(list)
         for doc_num, fname, chunk in selected_chunks:
             grouped[(doc_num, fname)].append(chunk)
@@ -143,7 +149,7 @@ if user_input:
         ]
 
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",  # <-- Change to gpt-4 here if you like
             messages=messages
         )
         answer = summary_msg + response.choices[0].message.content
