@@ -15,6 +15,13 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 st.set_page_config(page_title="📚 Ask Your Documents", layout="wide")
 st.title("📚 Multi-Format Document Chatbot")
 
+# Sidebar showing document list
+with st.sidebar:
+    st.subheader("📂 Available Documents")
+    all_docs = [f for f in os.listdir("./docs") if f.lower().endswith(('.pdf', '.docx', '.xlsx', '.xls', '.txt'))]
+    for doc in sorted(all_docs):
+        st.markdown(f"- `{doc}`")
+
 def extract_text_from_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
     if ext == ".pdf":
@@ -74,42 +81,49 @@ if "chat_history" not in st.session_state:
 
 user_input = st.chat_input("Ask a question about the documents")
 
+# Check if user is asking for the file list directly
+file_qs = ["what documents do you have", "list all documents", "what files are loaded", "what files do you have"]
+intercepted = user_input and any(q in user_input.lower() for q in file_qs)
+
 if user_input:
     st.session_state.chat_history.append(("user", user_input))
 
-    query_embedding = model.encode([user_input])
-    _, indices = index.search(np.array(query_embedding), k=8)
+    if intercepted:
+        reply = "Here are the documents I can reference:
 
-    selected_chunks = [file_chunks[i] for i in indices[0]]
+" + "\n".join(f"- {doc}" for doc in sorted(all_docs))
+        st.session_state.chat_history.append(("assistant", reply))
+    else:
+        query_embedding = model.encode([user_input])
+        _, indices = index.search(np.array(query_embedding), k=8)
 
-    # Group chunks by filename and pick the most common match
-    grouped = defaultdict(list)
-    for filename, chunk in selected_chunks:
-        grouped[filename].append(chunk)
+        selected_chunks = [file_chunks[i] for i in indices[0]]
+        grouped = defaultdict(list)
+        for filename, chunk in selected_chunks:
+            grouped[filename].append(chunk)
 
-    # Use the file with the most relevant chunks
-    best_file = max(grouped.items(), key=lambda x: len(x[1]))
-    context = "\n\n".join(best_file[1])
-    filename = best_file[0]
+        best_file = max(grouped.items(), key=lambda x: len(x[1]))
+        context = "\n\n".join(best_file[1])
+        filename = best_file[0]
 
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                f"You are a helpful assistant answering questions based strictly on the following content "
-                f"from the document [{filename}]. Be concise, clear, and if helpful, summarize in bullet points or sections:\n\n{context}"
-            )
-        },
-        {"role": "user", "content": user_input}
-    ]
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    f"You are a helpful assistant answering questions based strictly on the following content "
+                    f"from the document [{filename}]. Be concise, clear, and if helpful, summarize in bullet points or sections:\n\n{context}"
+                )
+            },
+            {"role": "user", "content": user_input}
+        ]
 
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=messages
-    )
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages
+        )
 
-    answer = response.choices[0].message.content
-    st.session_state.chat_history.append(("assistant", answer))
+        answer = response.choices[0].message.content
+        st.session_state.chat_history.append(("assistant", answer))
 
 for role, msg in st.session_state.chat_history:
     with st.chat_message(role):
